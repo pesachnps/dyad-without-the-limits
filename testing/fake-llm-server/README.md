@@ -7,7 +7,6 @@ A simple server that mimics the OpenAI streaming chat completions API for testin
 - Implements a basic version of the OpenAI chat completions API
 - Supports both streaming and non-streaming responses
 - Always responds with "hello world" message
-- Simulates a 429 rate limit error when the last message is "[429]"
 - Configurable through environment variables
 
 ## Installation
@@ -83,29 +82,6 @@ For non-streaming requests, you'll get a standard JSON response:
 
 For streaming requests, you'll receive a series of server-sent events (SSE), each containing a chunk of the response.
 
-### Simulating Rate Limit Errors
-
-To test how your application handles rate limiting, send a message with content exactly equal to `[429]`:
-
-```json
-{
-  "messages": [{ "role": "user", "content": "[429]" }],
-  "model": "any-model"
-}
-```
-
-This will return a 429 status code with the following response:
-
-```json
-{
-  "error": {
-    "message": "Too many requests. Please try again later.",
-    "type": "rate_limit_error",
-    "param": null,
-    "code": "rate_limit_exceeded"
-  }
-}
-```
 
 ## Configuration
 
