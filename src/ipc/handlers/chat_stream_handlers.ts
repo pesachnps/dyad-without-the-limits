@@ -38,7 +38,7 @@ import * as path from "path";
 import * as os from "os";
 import * as crypto from "crypto";
 import { readFile, writeFile, unlink } from "fs/promises";
-import { getMaxTokens, getTemperature } from "../utils/token_utils";
+import { getMaxTokens, getTemperature, getContextWindow } from "../utils/token_utils";
 import { MAX_CHAT_TURNS_IN_CONTEXT } from "@/constants/settings_constants";
 import { validateChatContext } from "../utils/context_paths_utils";
 import { GoogleGenerativeAIProviderOptions } from "@ai-sdk/google";
@@ -64,6 +64,11 @@ import { parseAppMentions } from "@/shared/parse_mention_apps";
 import { prompts as promptsTable } from "../../db/schema";
 import { inArray } from "drizzle-orm";
 import { replacePromptReference } from "../utils/replacePromptReference";
+import {
+  appendSnippets,
+  retrieveContext as retrieveSmartContext,
+  updateRollingSummary as updateSmartContextRollingSummary,
+} from "../utils/smart_context_store";
 
 type AsyncIterableStream<T> = AsyncIterable<T> & ReadableStream<T>;
 
@@ -632,9 +637,44 @@ This conversation includes one or more image attachments. When the user uploads 
             ] as const)
           : ([] as const);
 
+        // Smart Context: retrieve rolling summary + top snippets within a budget
+        const contextWindow = await getContextWindow();
+        // Reserve budget: 20% system/instructions, 20% output, 15% summary, rest for snippets
+        const availableForContext = Math.floor(contextWindow * 0.45);
+        const retrieval = await retrieveSmartContext(
+          req.chatId,
+          req.prompt,
+          Math.max(0, availableForContext),
+        );
+
+        const summaryPrefix: ModelMessage[] = retrieval.rollingSummary
+          ? ([
+              {
+                role: "user",
+                content: `Rolling summary:\n${retrieval.rollingSummary}`,
+              },
+              { role: "assistant", content: "Okay." },
+            ] as const)
+          : ([] as const);
+
+        const snippetsText = retrieval.snippets
+          .map((s) => `- ${s.text}`)
+          .join("\n\n");
+        const snippetsPrefix: ModelMessage[] = snippetsText
+          ? ([
+              {
+                role: "user",
+                content: `Relevant context snippets (compressed):\n${snippetsText}`,
+              },
+              { role: "assistant", content: "Noted." },
+            ] as const)
+          : ([] as const);
+
         let chatMessages: ModelMessage[] = [
           ...codebasePrefix,
           ...otherCodebasePrefix,
+          ...summaryPrefix,
+          ...snippetsPrefix,
           ...limitedMessageHistory.map((msg) => ({
             role: msg.role as "user" | "assistant" | "system",
             // Why remove thinking tags?
@@ -1088,6 +1128,21 @@ ${problemReport.problems
             logger.error(`Error scheduling file deletion: ${error}`);
           }
         }
+      }
+
+      // Append Smart Context snippets from this turn and update rolling summary title if present
+      try {
+        // Add user prompt and assistant response as snippets for future retrieval
+        await appendSnippets(req.chatId, [
+          { text: userPrompt, source: { type: "message" } },
+          { text: fullResponse, source: { type: "message" } },
+        ]);
+        const summaryMatch = fullResponse.match(/<dyad-chat-summary>(.*?)<\/dyad-chat-summary>/);
+        if (summaryMatch && summaryMatch[1]) {
+          await updateSmartContextRollingSummary(req.chatId, summaryMatch[1]);
+        }
+      } catch (e) {
+        logger.warn("smart-context post-write failed", e);
       }
 
       // Return the chat ID for backwards compatibility

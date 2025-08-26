@@ -65,6 +65,12 @@ import type {
 import type { Template } from "../shared/templates";
 import type { AppChatContext, ProposalResult } from "@/lib/schemas";
 import { showError } from "@/lib/toast";
+import type {
+  SmartContextMeta,
+  SmartContextSnippet,
+  SmartContextRetrieveResult,
+  RetrieveSmartContextParams,
+} from "./ipc_types";
 
 export interface ChatStreamCallbacks {
   onUpdate: (messages: Message[]) => void;
@@ -238,6 +244,38 @@ export class IpcClient {
       IpcClient.instance = new IpcClient();
     }
     return IpcClient.instance;
+  }
+
+  // --- Smart Context ---
+  public async getSmartContextMeta(chatId: number): Promise<SmartContextMeta> {
+    return this.ipcRenderer.invoke("sc:get-meta", chatId);
+  }
+
+  public async upsertSmartContextSnippets(
+    chatId: number,
+    snippets: Array<Pick<SmartContextSnippet, "text" | "source">>,
+  ): Promise<number> {
+    return this.ipcRenderer.invoke("sc:upsert-snippets", { chatId, snippets });
+  }
+
+  public async updateSmartContextRollingSummary(
+    chatId: number,
+    summary: string,
+  ): Promise<SmartContextMeta> {
+    return this.ipcRenderer.invoke("sc:update-rolling-summary", {
+      chatId,
+      summary,
+    });
+  }
+
+  public async retrieveSmartContext(
+    params: RetrieveSmartContextParams,
+  ): Promise<SmartContextRetrieveResult> {
+    return this.ipcRenderer.invoke("sc:retrieve-context", params);
+  }
+
+  public async rebuildSmartContextIndex(chatId: number): Promise<void> {
+    await this.ipcRenderer.invoke("sc:rebuild-index", chatId);
   }
 
   public async restartDyad(): Promise<void> {
