@@ -155,11 +155,43 @@ ${debugInfo.logs.slice(-3_500) || "No logs available"}
 
     setIsUploading(true);
     try {
-      // Prepare data for upload
+      // Prepare data for upload with pruning to avoid oversized payloads
+      const MAX_LOG_CHARS = 150_000;
+      const MAX_CODEBASE_CHARS = 200_000;
+      const MAX_MESSAGES = 200; // recent messages
+      const MAX_MESSAGE_CHARS = 8_000; // per message
+
+      const logs = chatLogsData.debugInfo?.logs || "";
+      const prunedLogs = logs.length > MAX_LOG_CHARS
+        ? logs.slice(-MAX_LOG_CHARS)
+        : logs;
+
+      const codebase = chatLogsData.codebase || "";
+      const prunedCodebase = codebase.length > MAX_CODEBASE_CHARS
+        ? codebase.slice(0, MAX_CODEBASE_CHARS) +
+          `\n\n[Truncated codebase snippet: original length ${codebase.length}]`
+        : codebase;
+
+      const allMessages = chatLogsData.chat?.messages || [];
+      const recentMessages = allMessages.slice(-MAX_MESSAGES).map((m) => ({
+        ...m,
+        content:
+          typeof m.content === "string" && m.content.length > MAX_MESSAGE_CHARS
+            ? m.content.slice(0, MAX_MESSAGE_CHARS) +
+              `\n\n[Truncated message: original length ${m.content.length}]`
+            : m.content,
+      }));
+
       const chatLogsJson = {
-        systemInfo: chatLogsData.debugInfo,
-        chat: chatLogsData.chat,
-        codebaseSnippet: chatLogsData.codebase,
+        systemInfo: {
+          ...chatLogsData.debugInfo,
+          logs: prunedLogs,
+        },
+        chat: {
+          ...chatLogsData.chat,
+          messages: recentMessages,
+        },
+        codebaseSnippet: prunedCodebase,
       };
 
       // Get signed URL
