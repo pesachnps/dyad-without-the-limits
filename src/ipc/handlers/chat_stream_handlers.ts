@@ -69,6 +69,21 @@ type AsyncIterableStream<T> = AsyncIterable<T> & ReadableStream<T>;
 
 const logger = log.scope("chat_stream_handlers");
 
+// Request size safeguards
+const MAX_CODEBASE_CHARS = 200_000; // ~200k chars for codebase context
+const MAX_OTHER_APPS_CODEBASE_CHARS = 200_000; // cap referenced apps section
+const MAX_TEXT_ATTACHMENT_CHARS = 50_000; // per text attachment
+const MAX_IMAGE_BYTES = 3 * 1024 * 1024; // 3MB per image
+
+function truncateWithNotice(input: string, limit: number, label: string): string {
+  if (input.length <= limit) return input;
+  const head = input.slice(0, limit);
+  return (
+    head +
+    `\n\n[Truncated ${label}: original length ${input.length.toLocaleString()} > limit ${limit.toLocaleString()}]`
+  );
+}
+
 // Track active streams for cancellation
 const activeStreams = new Map<number, AbortController>();
 
@@ -437,6 +452,12 @@ ${componentSnippet}
           );
         }
 
+        const cappedOtherAppsCodebaseInfo = truncateWithNotice(
+          otherAppsCodebaseInfo,
+          MAX_OTHER_APPS_CODEBASE_CHARS,
+          "referenced apps codebase context",
+        );
+
         logger.log(`Extracted codebase information from ${appPath}`);
         logger.log(
           "codebaseInfo: length",
@@ -448,6 +469,13 @@ ${componentSnippet}
           settings.selectedModel,
           settings,
           files,
+        );
+
+        // Apply size caps to codebase snippets prior to prompt construction
+        const cappedCodebaseInfo = truncateWithNotice(
+          codebaseInfo,
+          MAX_CODEBASE_CHARS,
+          "codebase context",
         );
 
         // Prepare message history for the AI
@@ -576,32 +604,33 @@ This conversation includes one or more image attachments. When the user uploads 
 `;
         }
 
-        const codebasePrefix = isEngineEnabled
-          ? // No codebase prefix if engine is set, we will take of it there.
-            []
+        const codebasePrefix = settings.enableProSmartFilesContextMode
+          ? ([] as const)
           : ([
               {
                 role: "user",
-                content: createCodebasePrompt(codebaseInfo),
+                content: createCodebasePrompt(cappedCodebaseInfo),
               },
               {
                 role: "assistant",
-                content: "OK, got it. I'm ready to help",
+                content:
+                  "Thanks for the codebase. I will use it to answer your questions.",
               },
             ] as const);
 
-        const otherCodebasePrefix = otherAppsCodebaseInfo
+        const otherCodebasePrefix = cappedOtherAppsCodebaseInfo
           ? ([
               {
                 role: "user",
-                content: createOtherAppsCodebasePrompt(otherAppsCodebaseInfo),
+                content: createOtherAppsCodebasePrompt(cappedOtherAppsCodebaseInfo),
               },
               {
                 role: "assistant",
-                content: "OK.",
+                content:
+                  "Got it. I will use the referenced apps' codebases for read-only context.",
               },
             ] as const)
-          : [];
+          : ([] as const);
 
         let chatMessages: ModelMessage[] = [
           ...codebasePrefix,
@@ -868,6 +897,12 @@ ${problemReport.problems
                     chatContext,
                     virtualFileSystem,
                   });
+
+                const cappedCodebaseInfoForContinuation = truncateWithNotice(
+                  codebaseInfo,
+                  MAX_CODEBASE_CHARS,
+                  "codebase context",
+                );
                 const { modelClient } = await getModelClient(
                   settings.selectedModel,
                   settings,
@@ -886,7 +921,7 @@ ${problemReport.problems
                       ) {
                         return {
                           role: "user",
-                          content: createCodebasePrompt(codebaseInfo),
+                          content: createCodebasePrompt(cappedCodebaseInfoForContinuation),
                         } as const;
                       }
                       return msg;
@@ -1135,6 +1170,12 @@ async function replaceTextAttachmentWithContent(
       // Read the full content
       const fullContent = await readFile(filePath, "utf-8");
 
+      const contentToInclude = truncateWithNotice(
+        fullContent,
+        MAX_TEXT_ATTACHMENT_CHARS,
+        `attachment ${fileName}`,
+      );
+
       // Replace the placeholder tag with the full content
       const escapedPath = filePath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       const tagPattern = new RegExp(
@@ -1144,7 +1185,7 @@ async function replaceTextAttachmentWithContent(
 
       const replacedText = text.replace(
         tagPattern,
-        `Full content of ${fileName}:\n\`\`\`\n${fullContent}\n\`\`\``,
+        `Full content of ${fileName}:\n\`\`\`\n${contentToInclude}\n\`\`\``,
       );
 
       logger.log(
@@ -1193,10 +1234,17 @@ async function prepareMessageWithAttachments(
   });
 
   // Add image parts for any image attachments
+  const omittedImages: string[] = [];
   for (const filePath of attachmentPaths) {
     const ext = path.extname(filePath).toLowerCase();
     if ([".jpg", ".jpeg", ".png", ".gif", ".webp"].includes(ext)) {
       try {
+        // Check size before reading
+        const stats = await fs.promises.stat(filePath);
+        if (stats.size > MAX_IMAGE_BYTES) {
+          omittedImages.push(path.basename(filePath));
+          continue;
+        }
         // Read the file as a buffer
         const imageBuffer = await readFile(filePath);
 
@@ -1211,6 +1259,16 @@ async function prepareMessageWithAttachments(
         logger.error(`Error reading image file: ${error}`);
       }
     }
+  }
+
+  if (omittedImages.length > 0) {
+    contentParts.push({
+      type: "text",
+      text:
+        `Note: ${omittedImages.length} image(s) omitted due to size limits (>${Math.floor(
+          MAX_IMAGE_BYTES / (1024 * 1024),
+        )}MB): ` + omittedImages.join(", "),
+    });
   }
 
   // Return the message with the content array
