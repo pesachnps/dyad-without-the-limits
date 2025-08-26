@@ -10,18 +10,8 @@ export const createChatCompletionHandler =
     const { stream = false, messages = [] } = req.body;
     console.log("* Received messages", messages);
 
-    // Check if the last message contains "[429]" to simulate rate limiting
+    // Disabled rate limit simulation
     const lastMessage = messages[messages.length - 1];
-    if (lastMessage && lastMessage.content === "[429]") {
-      return res.status(429).json({
-        error: {
-          message: "Too many requests. Please try again later.",
-          type: "rate_limit_error",
-          param: null,
-          code: "rate_limit_exceeded",
-        },
-      });
-    }
 
     let messageContent = CANNED_MESSAGE;
 
