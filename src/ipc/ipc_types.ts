@@ -354,6 +354,46 @@ export interface UploadFileToCodebaseResult {
   filePath: string;
 }
 
+// --- Smart Context Types ---
+export type SmartContextSource =
+  | { type: "message"; messageIndex?: number }
+  | { type: "code"; filePath: string }
+  | { type: "attachment"; name: string; mime?: string }
+  | { type: "other"; label?: string };
+
+export interface SmartContextSnippet {
+  id: string;
+  text: string;
+  score?: number;
+  source: SmartContextSource;
+  ts: number;
+  tokens?: number;
+}
+
+export interface SmartContextMetaConfig {
+  maxSnippets?: number;
+}
+
+export interface SmartContextMeta {
+  entityId: string;
+  updatedAt: number;
+  rollingSummary?: string;
+  summaryTokens?: number;
+  config?: SmartContextMetaConfig;
+}
+
+export interface RetrieveSmartContextParams {
+  chatId: number;
+  query: string;
+  budgetTokens: number;
+}
+
+export interface SmartContextRetrieveResult {
+  rollingSummary?: string;
+  usedTokens: number;
+  snippets: SmartContextSnippet[];
+}
+
 // --- Prompts ---
 export interface PromptDto {
   id: number;

@@ -106,6 +106,12 @@ const validInvokeChannels = [
   "restart-dyad",
   "get-templates",
   "portal:migrate-create",
+  // Smart Context
+  "sc:get-meta",
+  "sc:upsert-snippets",
+  "sc:update-rolling-summary",
+  "sc:retrieve-context",
+  "sc:rebuild-index",
   // Help bot
   "help:chat:start",
   "help:chat:cancel",
